@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: None
 pragma solidity ^0.8.13;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/math/Math.sol";
-import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+import "node_modules/@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "node_modules/@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "node_modules/@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "node_modules/@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "node_modules/@openzeppelin/contracts/access/Ownable.sol";
+import "node_modules/@openzeppelin/contracts/utils/math/Math.sol";
+import "node_modules/@openzeppelin/contracts/utils/math/SafeMath.sol";
 
 contract ExsPreSale is Ownable, ReentrancyGuard {
     using SafeMath for uint256;
@@ -26,10 +26,9 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
     uint private _start; // timestamp (seconds)
     uint private _softCap;
     uint private _hardCap;
-    uint private _rate;
-    bool private _rateLessThenOne;
-    uint private _fee;
-    uint private _singleTokenInBits;
+    uint private _rate; // how many wei for 1 token bit or vice-versa
+    bool private _reverseRate; // if the token is worth more then the collateral this should be true
+    uint private _fee; // contract deployment fee
     uint private _raised; // this variable will store the amount of coins raised after the pre-sale will be ended
     bool private _claimed;
     bool private _isCanceled;
@@ -55,11 +54,11 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
 
     constructor(
         ERC20 token,
-        uint tokenAmount, // in tknBits
         uint duration, // seconds
         uint softCap,
         uint hardCap,
-        uint rate, // how many wei for 1 token
+        uint rate,
+        bool reverseRate,
         bool vestingForInvestors,
         uint start,
         uint fee,
@@ -78,9 +77,9 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         _softCap=softCap*10**18;
         _hardCap=hardCap*10**18;
         _vestingForInvestors=vestingForInvestors;
-        _singleTokenInBits=10**(token.decimals());
         _whitelistActive=whitelist;
         _rate=rate;
+        _reverseRate=reverseRate;
         _presaleInfo = presaleInfo;
         token.transferFrom(msg.sender, address(this),tokenAmount);
     }
@@ -138,7 +137,11 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
     {
         uint oldAmount_=_balances[msg.sender];
         require(((address(this).balance)+msg.value) <= _hardCap, "Not allowed: This amount exceeds the available tokens supply");
-        _balances[msg.sender] += (msg.value*_rate);
+        if(_reverseRate){
+            _balances[msg.sender] += (msg.value/_rate);
+        }else{
+            _balances[msg.sender] += (msg.value*_rate);
+        }
         _investments[msg.sender] += msg.value;
         emit invested(
             oldAmount_,
