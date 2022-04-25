@@ -1,13 +1,26 @@
 // SPDX-License-Identifier: None
 pragma solidity ^0.8.13;
 
-import "node_modules/@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "node_modules/@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "node_modules/@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "node_modules/@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "node_modules/@openzeppelin/contracts/access/Ownable.sol";
-import "node_modules/@openzeppelin/contracts/utils/math/Math.sol";
-import "node_modules/@openzeppelin/contracts/utils/math/SafeMath.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/math/Math.sol";
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+import "@openzeppelin/contracts/finance/VestingWallet.sol";
+
+contract ExsVesting is VestingWallet {
+    constructor(
+        address beneficiaryAddress,
+        uint64 startTimestamp,
+        uint64 durationSeconds
+    ) VestingWallet(
+        beneficiaryAddress,
+        startTimestamp,
+        durationSeconds
+    ) {}
+}
 
 contract ExsPreSale is Ownable, ReentrancyGuard {
     using SafeMath for uint256;
@@ -17,10 +30,10 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
     mapping (address => uint) private _referrals;
     mapping (address => uint) private _investments;
     mapping (address => bool) private _whitelist;
+
     bool private _whitelistActive;
     address payable private _vestingWallet;
     address payable private _feeBeneficiary = payable(0x5B38Da6a701c568545dCfcB03FcB875f56beddC4);
-    bool private _vestingForInvestors;
     ERC20 private _token;
     uint private _end; // timestamp (seconds)
     uint private _start; // timestamp (seconds)
@@ -33,6 +46,20 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
     bool private _claimed;
     bool private _isCanceled;
     bool private _isFinalized;
+
+    // vesting params
+    struct Vesting{
+        bool enabled;   
+        address beneficiaryAddress;
+        uint64 startTimestamp;
+        uint64 durationSeconds;
+    }
+    struct VestingAddress{
+        bool enabled;   
+        ExsVesting vestingAddress;
+    }
+    VestingAddress private _contributorsVesting;
+    VestingAddress private _teamVesting;
 
     // pre-sale info
     struct PresaleInfo{
@@ -55,14 +82,15 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
     constructor(
         ERC20 token,
         uint duration, // seconds
+        uint start,
         uint softCap,
         uint hardCap,
         uint rate,
         bool reverseRate,
-        bool vestingForInvestors,
-        uint start,
         uint fee,
         bool whitelist,
+        Vesting memory contributorsVesting,
+        Vesting memory teamVesting,
         PresaleInfo memory presaleInfo
     ) payable {
         require(start<=block.timestamp, "Start date-time must be after current date-time");
@@ -76,12 +104,23 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         _end=start + duration;
         _softCap=softCap*10**18;
         _hardCap=hardCap*10**18;
-        _vestingForInvestors=vestingForInvestors;
         _whitelistActive=whitelist;
         _rate=rate;
         _reverseRate=reverseRate;
         _presaleInfo = presaleInfo;
-        token.transferFrom(msg.sender, address(this),tokenAmount);
+        if(reverseRate){
+            token.transferFrom(msg.sender, address(this),(hardCap/_rate));
+        }else{
+            token.transferFrom(msg.sender, address(this),(hardCap*_rate));
+        }
+        if(contributorsVesting.enabled){
+            _contributorsVesting.enabled=true;
+            _contributorsVesting.vestingAddress = new ExsVesting(contributorsVesting.beneficiaryAddress,contributorsVesting.durationSeconds,contributorsVesting.startTimestamp);
+        }
+        if(teamVesting.enabled){
+            _teamVesting.enabled=true;
+            _teamVesting.vestingAddress = new ExsVesting(teamVesting.beneficiaryAddress,teamVesting.durationSeconds,teamVesting.startTimestamp);
+        }
     }
 
     // events
@@ -89,15 +128,15 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
     event invested(
         uint oldAmount,
         uint newAmount,
-        address indexed investor
+        address indexed contributor
     );
     event revertedInvestment(
         uint amount,
-        address indexed investor
+        address indexed contributor
     );
     event tokenWithdrawed(
         uint amount,
-        address indexed investor
+        address indexed contributor
     );
     event prasaleCanceled();
     event presaleInfoEdited(
@@ -174,8 +213,8 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         nonReentrant
         onlyIfCompleted
     {
-        if(_vestingForInvestors){
-            _token.transfer(_vestingWallet, _balances[msg.sender]);
+        if(_contributorsVesting.enabled){
+            _token.transfer(address(_contributorsVesting.vestingAddress), _balances[msg.sender]);
         }else{
             _token.transfer(msg.sender, _balances[msg.sender]);
         }
@@ -279,7 +318,11 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
                 status = Status.CANCELED;
             }
         }else if(_start>=block.timestamp&&block.timestamp<=_end){
-            status = Status.ACTIVE;
+            if(raisedAmount()>=_hardCap||_isFinalized){
+                status = Status.COMPLETED;
+            }else{
+                status = Status.ACTIVE;
+            }
         }else if(_isCanceled){
             status = Status.CANCELED;
         }
@@ -310,8 +353,8 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
             return address(this).balance;
         }
     }
-    function hasVestingForInvestors() public view returns (bool) {
-        return _vestingForInvestors;
+    function hasContributorsVesting() public view returns (bool) {
+        return _contributorsVesting.enabled;
     }
     function claimed() public view returns (bool) {
         return _claimed;
