@@ -76,6 +76,12 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
     }
     PresaleInfo private _presaleInfo;
 
+    // rate info
+    struct Rate{
+        uint rate;
+        bool reverseRate;
+    }
+
     enum Status{ UPCOMING, ACTIVE, COMPLETED, CANCELED }
     Status private _status;
 
@@ -85,10 +91,9 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         uint start,
         uint softCap,
         uint hardCap,
-        uint rate,
-        bool reverseRate,
         uint fee,
         bool whitelist,
+        Rate memory rate,
         Vesting memory contributorsVesting,
         Vesting memory teamVesting,
         PresaleInfo memory presaleInfo
@@ -105,10 +110,10 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         _softCap=softCap*10**18;
         _hardCap=hardCap*10**18;
         _whitelistActive=whitelist;
-        _rate=rate;
-        _reverseRate=reverseRate;
+        _rate=rate.rate;
+        _reverseRate=rate.reverseRate;
         _presaleInfo = presaleInfo;
-        if(reverseRate){
+        if(rate.reverseRate){
             token.transferFrom(msg.sender, address(this),(hardCap/_rate));
         }else{
             token.transferFrom(msg.sender, address(this),(hardCap*_rate));
