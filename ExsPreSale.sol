@@ -9,6 +9,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/finance/VestingWallet.sol";
+import "./ExsReferral.sol";
 
 contract ExsVesting is VestingWallet {
     constructor(
@@ -23,18 +24,28 @@ contract ExsVesting is VestingWallet {
 }
 
 contract ExsPreSale is Ownable, ReentrancyGuard {
+    using SafeMath for uint;
+    using SafeMath for uint64;
+    using SafeMath for uint32;
+    using SafeMath for uint8;
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
+    // referral program 
+    mapping (address => uint) private _referrals; // amount raised by each referral codes
+    ExsReferral private _referralProgram; // Expresso referral program smart contract
+    uint private _raisedWithReferral; // total amount raised using a valid referral code
+    uint8 private _feeOnContribution = 4; // % of total raised amount
+    uint8 private _referralReward = 30; // % of _feeOnContribution on amount raised through referral codes
+
     mapping (address => uint256) private _balances;
-    mapping (address => uint) private _referrals;
     mapping (address => uint) private _investments;
     mapping (address => bool) private _whitelist;
 
+    ERC20 private _token;
     bool private _whitelistActive;
     address payable private _vestingWallet;
     address payable private _feeBeneficiary = payable(0x5B38Da6a701c568545dCfcB03FcB875f56beddC4);
-    ERC20 private _token;
     uint private _end; // timestamp (seconds)
     uint private _start; // timestamp (seconds)
     uint private _softCap;
@@ -173,7 +184,7 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
     /**
     * @notice Buy tokens that will be released at the end of the pre-sale.
     */
-    function buyTokens()
+    function buyTokens(uint32 referralCode)
         external
         payable
         onlyIfActive
@@ -187,6 +198,11 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
             _balances[msg.sender] += (msg.value*_rate);
         }
         _investments[msg.sender] += msg.value;
+        address ref = _referralProgram.getReferralAddress(referralCode);
+        if(ref!=address(0)){
+            _referrals[ref] += msg.value;
+            _raisedWithReferral += msg.value;
+        }
         emit invested(
             oldAmount_,
             _balances[msg.sender],
@@ -204,9 +220,24 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         onlyOwner
     {
         _raised=address(this).balance;
-        (bool sent, bytes memory data) = msg.sender.call{value: address(this).balance}("");
+        uint referralReward=(((_raisedWithReferral/100)*_feeOnContribution)/100)*_referralReward;
+        uint calimable = (_raised-((_raised/100)*_feeOnContribution))-referralReward;
+        (bool sent, bytes memory data) = msg.sender.call{value: calimable}("");
         require(sent, "Failed to send");
         _claimed=true;
+    }
+
+    function referralClaim()
+        external
+        nonReentrant
+        onlyIfCompleted
+    {
+        require(_referralProgram.isRegistered(msg.sender), "This account is not a referral");
+        require(_referrals[msg.sender]>0, "Amount raised with this referral is zero or has already been claimed");
+        uint reward=(((_referrals[msg.sender]/100)*_feeOnContribution)/100)*_referralReward;
+        (bool sent, bytes memory data) = msg.sender.call{value: reward}("");
+        require(sent, "Failed to send");
+        _referrals[msg.sender]=0;
     }
 
     /**

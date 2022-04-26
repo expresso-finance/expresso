@@ -10,12 +10,12 @@ contract ExsReferral is Ownable{
     uint32 private _referralCodeBase = 127543; // max uint32 value 4,294,967,295
     uint32 private _codesCount;
 
-    modifier isRegistered(){
-        require(_registeredReferrals[msg.sender]==true, "This account is not a referral");
+    modifier onlyIfRegistered(){
+        require(isRegistered(msg.sender)==true, "This account is not a referral");
         _;
     }
-    modifier isNotRegistered(){
-        require(_registeredReferrals[msg.sender]==false, "This account is already a referral");
+    modifier onlyIfNotRegistered(){
+        require(isRegistered(msg.sender)==false, "This account is already a referral");
         _;
     }
 
@@ -36,7 +36,7 @@ contract ExsReferral is Ownable{
     
     function register()
         external
-        isNotRegistered
+        onlyIfNotRegistered
     {
         _codesCount+=1;
         uint32 code=_referralCodeBase+_codesCount;
@@ -46,7 +46,7 @@ contract ExsReferral is Ownable{
     }
     function unregister()
         external
-        isRegistered
+        onlyIfRegistered
     {
         _codesReferrals[_referralCodes[msg.sender]]=address(0);
         _referralCodes[msg.sender]=0;
@@ -68,5 +68,13 @@ contract ExsReferral is Ownable{
         _registeredReferrals[_codesReferrals[code]]=false;
         _referralCodes[_codesReferrals[code]]=0;
         _codesReferrals[code]=address(0);
+    }
+
+    function isRegistered(address account)
+        public
+        view
+        returns(bool)
+    {
+        return(_registeredReferrals[account]);
     }
 }
