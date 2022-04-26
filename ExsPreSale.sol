@@ -33,7 +33,7 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
 
     // referral program 
     mapping (address => uint) private _referrals; // amount raised by each referral codes
-    ExsReferral private _referralProgram; // Expresso referral program smart contract
+    ExsReferral private _referralProgram = ExsReferral(0xd8b934580fcE35a11B58C6D73aDeE468a2833fa8); // Expresso referral program smart contract
     uint private _raisedWithReferral; // total amount raised using a valid referral code
     uint8 private _feeOnContribution = 4; // % of total raised amount
     uint8 private _referralReward = 30; // % of _feeOnContribution on amount raised through referral codes
@@ -89,12 +89,14 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
 
     // rate info
     struct Rate{
-        uint rate;
+        uint8 rate;
         bool reverseRate;
     }
 
-    enum Status{ UPCOMING, ACTIVE, COMPLETED, CANCELED }
-    Status private _status;
+    uint8 private _upcoming=0;
+    uint8 private _active=1;
+    uint8 private _completed=2;
+    uint8 private _canceled=3;
 
     constructor(
         ERC20 token,
@@ -112,7 +114,7 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         require(start<=block.timestamp, "Start date-time must be after current date-time");
         require(softCap<=hardCap,"Softcap must be >= 50% of the Hardcap and <= Hardcap");
         require(softCap>=(hardCap/2),"Softcap must be >= 50% of the Hardcap and <= Hardcap");
-        _fee=fee*10**12;
+        _fee=fee*10**18;
         require(msg.value==_fee, "Invalid transaction value");
         (bool sent, bytes memory data) = _feeBeneficiary.call{value: msg.value}("");
         _token=token;
@@ -124,11 +126,11 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         _rate=rate.rate;
         _reverseRate=rate.reverseRate;
         _presaleInfo = presaleInfo;
-        if(rate.reverseRate){
+        /*if(rate.reverseRate){
             token.transferFrom(msg.sender, address(this),(hardCap/_rate));
         }else{
             token.transferFrom(msg.sender, address(this),(hardCap*_rate));
-        }
+        }*/
         if(contributorsVesting.enabled){
             _contributorsVesting.enabled=true;
             _contributorsVesting.vestingAddress = new ExsVesting(contributorsVesting.beneficiaryAddress,contributorsVesting.durationSeconds,contributorsVesting.startTimestamp);
@@ -163,15 +165,15 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
     // modifiers
 
     modifier onlyIfActive(){
-        require(getStatus()==Status.ACTIVE, "Presale not active");
+        require(getStatus()==_active, "Presale not active");
         _;
     }
     modifier onlyIfCompleted(){
-        require(getStatus()==Status.COMPLETED, "Presale not completed");
+        require(getStatus()==_completed, "Presale not completed");
         _;
     }
     modifier onlyIfCanceled(){
-        require(getStatus()==Status.CANCELED, "Presale not canceled");
+        require(getStatus()==_canceled, "Presale not canceled");
         _;
     }
     modifier onlyIfWhitelisted(){
@@ -344,23 +346,23 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
     function getInvestedAmount() public view returns (uint) {
         return _investments[msg.sender];
     }
-    function getStatus() public view returns (Status status){
+    function getStatus() public view returns (uint8 status){
         if(block.timestamp<_start){
-            status = Status.UPCOMING;
+            status = _upcoming;
         }else if(block.timestamp>=_end){
             if(raisedAmount()>=_softCap||_isFinalized){
-                status = Status.COMPLETED;
+                status = _completed;
             }else{
-                status = Status.CANCELED;
+                status = _canceled;
             }
-        }else if(_start>=block.timestamp&&block.timestamp<=_end){
+        }else if(_start<=block.timestamp&&block.timestamp<=_end){
             if(raisedAmount()>=_hardCap||_isFinalized){
-                status = Status.COMPLETED;
+                status = _completed;
             }else{
-                status = Status.ACTIVE;
+                status = _active;
             }
         }else if(_isCanceled){
-            status = Status.CANCELED;
+            status = _canceled;
         }
         return status;
     }
