@@ -10,6 +10,7 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/finance/VestingWallet.sol";
 import "./ExsReferral.sol";
+import "./ExsFeesManager.sol";
 
 contract ExsVesting is VestingWallet {
     constructor(
@@ -24,10 +25,6 @@ contract ExsVesting is VestingWallet {
 }
 
 contract ExsPreSale is Ownable, ReentrancyGuard {
-    using SafeMath for uint;
-    using SafeMath for uint64;
-    using SafeMath for uint32;
-    using SafeMath for uint8;
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
@@ -43,16 +40,17 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
     mapping (address => bool) private _whitelist;
 
     ERC20 private _token;
+    ExsFeesManager private _feeManager; // smart contract where fee info are stored
     bool private _whitelistActive;
     address payable private _vestingWallet;
     address payable private _feeBeneficiary = payable(0x5B38Da6a701c568545dCfcB03FcB875f56beddC4);
     uint private _end; // timestamp (seconds)
     uint private _start; // timestamp (seconds)
+    bool private _started;
     uint private _softCap;
     uint private _hardCap;
     uint private _rate; // how many wei for 1 token bit or vice-versa
     bool private _reverseRate; // if the token is worth more then the collateral this should be true
-    uint private _fee; // contract deployment fee
     uint private _raised; // this variable will store the amount of coins raised after the pre-sale will be ended
     bool private _claimed;
     bool private _isCanceled;
@@ -102,9 +100,9 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         ERC20 token,
         uint duration, // seconds
         uint start,
-        uint softCap,
-        uint hardCap,
-        uint fee,
+        uint softCap, // in ether
+        uint hardCap, // in ether
+        uint32 chainId,
         bool whitelist,
         Rate memory rate,
         Vesting memory contributorsVesting,
@@ -114,8 +112,7 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         require(start<=block.timestamp, "Start date-time must be after current date-time");
         require(softCap<=hardCap,"Softcap must be >= 50% of the Hardcap and <= Hardcap");
         require(softCap>=(hardCap/2),"Softcap must be >= 50% of the Hardcap and <= Hardcap");
-        _fee=fee*10**18;
-        require(msg.value==_fee, "Invalid transaction value");
+        require(msg.value==_feeManager.getChainFee(chainId), "Invalid transaction value");
         (bool sent, bytes memory data) = _feeBeneficiary.call{value: msg.value}("");
         _token=token;
         _start=start;
