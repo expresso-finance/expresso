@@ -29,6 +29,7 @@ contract ExsReferral is Ownable{
     function getReferralAddress(uint32 code)
         public
         view
+        onlyOwner
         returns(address)
     {
         return _codesReferrals[code];
