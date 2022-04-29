@@ -1,15 +1,15 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: none
 pragma solidity ^0.8.13;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 contract ExsFeesManager is Ownable {
-    mapping(uint32=>uint) private _chianFees;
+    mapping(uint=>uint) private _chainFees;
 
-    function getChainFee(uint32 chainId) public view returns(uint){
-       return _chianFees[chainId];
+    function getChainFee(uint chainId) public view returns(uint){
+       return _chainFees[chainId];
     }
-    function setChainFee(uint32 chainId, uint fee) external onlyOwner{
-       _chianFees[chainId]=fee;
+    function setChainFee(uint chainId, uint fee) external onlyOwner{
+       _chainFees[chainId]=fee;
     }
 }

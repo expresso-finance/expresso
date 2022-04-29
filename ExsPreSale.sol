@@ -11,6 +11,7 @@ import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/finance/VestingWallet.sol";
 import "./ExsReferral.sol";
 import "./ExsFeesManager.sol";
+import "./ExsIntermediary.sol";
 
 contract ExsVesting is VestingWallet {
     constructor(
@@ -28,19 +29,22 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
+    // smart contracts
+    ExsFeesManager private _feeManager = ExsFeesManager(0x358AA13c52544ECCEF6B0ADD0f801012ADAD5eE3); // smart contract where fee info are stored
+    ExsReferral private _referralProgram = ExsReferral(0x7EF2e0048f5bAeDe046f6BF797943daF4ED8CB47); // Expresso referral program manager smart contract
+    ExsIntermediary private _intermediary = ExsIntermediary(0xDA0bab807633f07f013f94DD0E6A4F96F8742B53);
+
     // referral program 
     mapping (address => uint) private _referrals; // amount raised by each referral codes
-    ExsReferral private _referralProgram = ExsReferral(0xd8b934580fcE35a11B58C6D73aDeE468a2833fa8); // Expresso referral program smart contract
     uint private _raisedWithReferral; // total amount raised using a valid referral code
-    uint8 private _feeOnContribution = 4; // % of total raised amount
-    uint8 private _referralReward = 30; // % of _feeOnContribution on amount raised through referral codes
+    uint8 private _contributionFee = 4; // % of total raised amount
+    uint8 private _referralReward = 30; // % of _contributionFee on amount raised through referral codes
 
     mapping (address => uint256) private _balances;
     mapping (address => uint) private _investments;
     mapping (address => bool) private _whitelist;
 
     ERC20 private _token;
-    ExsFeesManager private _feeManager; // smart contract where fee info are stored
     bool private _whitelistActive;
     address payable private _vestingWallet;
     address payable private _feeBeneficiary = payable(0x5B38Da6a701c568545dCfcB03FcB875f56beddC4);
@@ -102,7 +106,6 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         uint start,
         uint softCap, // in ether
         uint hardCap, // in ether
-        uint32 chainId,
         bool whitelist,
         Rate memory rate,
         Vesting memory contributorsVesting,
@@ -112,7 +115,7 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         require(start<=block.timestamp, "Start date-time must be after current date-time");
         require(softCap<=hardCap,"Softcap must be >= 50% of the Hardcap and <= Hardcap");
         require(softCap>=(hardCap/2),"Softcap must be >= 50% of the Hardcap and <= Hardcap");
-        require(msg.value==_feeManager.getChainFee(chainId), "Invalid transaction value");
+        require(msg.value==_feeManager.getChainFee(block.chainid), "Invalid transaction value");
         (bool sent, bytes memory data) = _feeBeneficiary.call{value: msg.value}("");
         _token=token;
         _start=start;
@@ -123,11 +126,11 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         _rate=rate.rate;
         _reverseRate=rate.reverseRate;
         _presaleInfo = presaleInfo;
-        /*if(rate.reverseRate){
-            token.transferFrom(msg.sender, address(this),(hardCap/_rate));
+        if(rate.reverseRate){
+            _intermediary.receiveTokensFromOrigin(token, (_hardCap/_rate));
         }else{
-            token.transferFrom(msg.sender, address(this),(hardCap*_rate));
-        }*/
+            _intermediary.receiveTokensFromOrigin(token, (_hardCap*_rate));
+        }
         if(contributorsVesting.enabled){
             _contributorsVesting.enabled=true;
             _contributorsVesting.vestingAddress = new ExsVesting(contributorsVesting.beneficiaryAddress,contributorsVesting.durationSeconds,contributorsVesting.startTimestamp);
@@ -162,24 +165,29 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
     // modifiers
 
     modifier onlyIfActive(){
-        require(getStatus()==_active, "Presale not active");
+        require(status()==_active, "Presale not active");
         _;
     }
     modifier onlyIfCompleted(){
-        require(getStatus()==_completed, "Presale not completed");
+        require(status()==_completed, "Presale not completed");
         _;
     }
     modifier onlyIfCanceled(){
-        require(getStatus()==_canceled, "Presale not canceled");
+        require(status()==_canceled, "Presale not canceled");
         _;
     }
     modifier onlyIfWhitelisted(){
-        require(_whitelist[msg.sender]&&_whitelistActive, "Address not in whitelist");
+        require((_whitelist[msg.sender])||(_whitelistActive==false), "Address not in whitelist");
+        _;
+    }
+    modifier onlyIfEnoughSupply(){
+        require(((address(this).balance)+msg.value) <= _hardCap, "Not allowed: This amount exceeds the available tokens supply");
         _;
     }
 
 
     // write functions
+
     /**
     * @notice Buy tokens that will be released at the end of the pre-sale.
     */
@@ -188,9 +196,9 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         payable
         onlyIfActive
         onlyIfWhitelisted
+        onlyIfEnoughSupply
     {
         uint oldAmount_=_balances[msg.sender];
-        require(((address(this).balance)+msg.value) <= _hardCap, "Not allowed: This amount exceeds the available tokens supply");
         if(_reverseRate){
             _balances[msg.sender] += (msg.value/_rate);
         }else{
@@ -219,8 +227,8 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         onlyOwner
     {
         _raised=address(this).balance;
-        uint referralReward=(((_raisedWithReferral/100)*_feeOnContribution)/100)*_referralReward;
-        uint calimable = (_raised-((_raised/100)*_feeOnContribution))-referralReward;
+        uint referralReward=(((_raisedWithReferral/100)*_contributionFee)/100)*_referralReward;
+        uint calimable = (_raised-((_raised/100)*_contributionFee))-referralReward;
         (bool sent, bytes memory data) = msg.sender.call{value: calimable}("");
         require(sent, "Failed to send");
         _claimed=true;
@@ -233,7 +241,7 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
     {
         require(_referralProgram.isRegistered(msg.sender), "This account is not a referral");
         require(_referrals[msg.sender]>0, "Amount raised with this referral is zero or has already been claimed");
-        uint reward=(((_referrals[msg.sender]/100)*_feeOnContribution)/100)*_referralReward;
+        uint reward=(((_referrals[msg.sender]/100)*_contributionFee)/100)*_referralReward;
         (bool sent, bytes memory data) = msg.sender.call{value: reward}("");
         require(sent, "Failed to send");
         _referrals[msg.sender]=0;
@@ -268,10 +276,10 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         _isCanceled=true;
         _raised=0;
     }
-    function revertInvestiment()
+    function refundContribution()
         external
         nonReentrant
-        onlyIfCanceled
+        onlyIfCanceled 
     {   
         (bool sent, bytes memory data) = msg.sender.call{value: _investments[msg.sender]}("");
         require(sent, "Failed to send");
@@ -337,23 +345,23 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
 
     //read functions
 
-    function getBalance() public view returns (uint256) {
+    function balance() public view returns (uint256) {
         return _balances[msg.sender];
     }
-    function getInvestedAmount() public view returns (uint) {
+    function cotributionAmount() public view returns (uint) {
         return _investments[msg.sender];
     }
-    function getStatus() public view returns (uint8 status){
+    function status() public view returns (uint8 status){
         if(block.timestamp<_start){
             status = _upcoming;
         }else if(block.timestamp>=_end){
-            if(raisedAmount()>=_softCap||_isFinalized){
+            if(totalContributionAmount()>=_softCap||_isFinalized){
                 status = _completed;
             }else{
                 status = _canceled;
             }
         }else if(_start<=block.timestamp&&block.timestamp<=_end){
-            if(raisedAmount()>=_hardCap||_isFinalized){
+            if(totalContributionAmount()>=_hardCap||_isFinalized){
                 status = _completed;
             }else{
                 status = _active;
@@ -363,14 +371,17 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         }
         return status;
     }
-    function getSoftCap() public view returns (uint256) {
+    function softCapAmount() public view returns (uint256) {
         return _softCap;
     }
-    function getHardCap() public view returns (uint256) {
+    function hardCapAmount() public view returns (uint256) {
         return _hardCap;
     }
-    function getRate() public view returns (uint256) {
+    function convertionRate() public view returns (uint256) {
         return _rate;
+    }
+    function reverseRate() public view returns (bool) {
+        return _reverseRate;
     }
     function endTimestamp() public view returns (uint256) {
         return _end;
@@ -378,17 +389,17 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
     function tokenAddress() public view returns (ERC20) {
         return _token;
     }
-    function getTokenBalance() public view returns (uint){
+    function tokenAmount() public view returns (uint){
         return _token.balanceOf(address(this));
     }
-    function raisedAmount() public view returns (uint256) {
+    function totalContributionAmount() public view returns (uint256) {
         if(_claimed){
             return _raised;  
         }else{
             return address(this).balance;
         }
     }
-    function hasContributorsVesting() public view returns (bool) {
+    function contributorsVestingEnabled() public view returns (bool) {
         return _contributorsVesting.enabled;
     }
     function claimed() public view returns (bool) {
