@@ -13,6 +13,7 @@ import "./ExsReferral.sol";
 import "./ExsFeesManager.sol";
 import "./ExsIntermediary.sol";
 
+
 contract ExsVesting is VestingWallet {
     constructor(
         address beneficiaryAddress,
@@ -30,7 +31,7 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // smart contracts
-    ExsFeesManager private _feeManager = ExsFeesManager(0x358AA13c52544ECCEF6B0ADD0f801012ADAD5eE3); // smart contract where fee info are stored
+    ExsFeesManager private _feeManager = ExsFeesManager(0x358AA13c52544ECCEF6B0ADD0f801012ADAD5eE3); // Smart contract where fee info are stored
     ExsReferral private _referralProgram = ExsReferral(0x7EF2e0048f5bAeDe046f6BF797943daF4ED8CB47); // Expresso referral program manager smart contract
     ExsIntermediary private _intermediary = ExsIntermediary(0xDA0bab807633f07f013f94DD0E6A4F96F8742B53);
 
@@ -59,6 +60,7 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
     bool private _claimed;
     bool private _isCanceled;
     bool private _isFinalized;
+    uint private _minContribution;
 
     // vesting params
     struct Vesting{
@@ -95,17 +97,22 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         bool reverseRate;
     }
 
-    uint8 private _upcoming=0;
-    uint8 private _active=1;
-    uint8 private _completed=2;
-    uint8 private _canceled=3;
+    uint8 private _UPCOMING=0;
+    uint8 private _ACTIVE=1;
+    uint8 private _COMPLETED=2;
+    uint8 private _FINALIZED=3;
+    uint8 private _CANCELED=4;
 
+    uint32 constant private _CONTRACT_ID=1;
+    //address constant private _ROUTER_ADDRESS=0x10ED43C718714eb63d5aA57B78B54704E256024E;
+    
     constructor(
         ERC20 token,
         uint duration, // seconds
         uint start,
         uint softCap, // in ether
         uint hardCap, // in ether
+        uint minContribution, // in ether
         bool whitelist,
         Rate memory rate,
         Vesting memory contributorsVesting,
@@ -115,8 +122,10 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         require(start<=block.timestamp, "Start date-time must be after current date-time");
         require(softCap<=hardCap,"Softcap must be >= 50% of the Hardcap and <= Hardcap");
         require(softCap>=(hardCap/2),"Softcap must be >= 50% of the Hardcap and <= Hardcap");
-        require(msg.value==_feeManager.getChainFee(block.chainid), "Invalid transaction value");
+        require(msg.value==_feeManager.getChainFee(block.chainid,_CONTRACT_ID), "Invalid transaction value");
+        require(minContribution<=softCap,"Minimum contirbution must be less or equal than the soft cap");
         (bool sent, bytes memory data) = _feeBeneficiary.call{value: msg.value}("");
+        _minContribution=minContribution*10**18;
         _token=token;
         _start=start;
         _end=start + duration;
@@ -165,15 +174,19 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
     // modifiers
 
     modifier onlyIfActive(){
-        require(status()==_active, "Presale not active");
+        require(status()==_ACTIVE, "Presale not active");
         _;
     }
     modifier onlyIfCompleted(){
-        require(status()==_completed, "Presale not completed");
+        require(status()==_COMPLETED, "Presale not completed");
+        _;
+    }
+    modifier onlyIfFinalized(){
+        require(status()==_FINALIZED, "Presale not finalized");
         _;
     }
     modifier onlyIfCanceled(){
-        require(status()==_canceled, "Presale not canceled");
+        require(status()==_CANCELED, "Presale not canceled");
         _;
     }
     modifier onlyIfWhitelisted(){
@@ -198,6 +211,7 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         onlyIfWhitelisted
         onlyIfEnoughSupply
     {
+        require(msg.value>=_minContribution, "Value subceed minimum contribution");
         uint oldAmount_=_balances[msg.sender];
         if(_reverseRate){
             _balances[msg.sender] += (msg.value/_rate);
@@ -353,22 +367,27 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
     }
     function status() public view returns (uint8 status){
         if(block.timestamp<_start){
-            status = _upcoming;
+            status = _UPCOMING;
         }else if(block.timestamp>=_end){
-            if(totalContributionAmount()>=_softCap||_isFinalized){
-                status = _completed;
+            if(totalContributionAmount()>=_softCap){
+                status = _COMPLETED;
             }else{
-                status = _canceled;
+                status = _CANCELED;
             }
         }else if(_start<=block.timestamp&&block.timestamp<=_end){
-            if(totalContributionAmount()>=_hardCap||_isFinalized){
-                status = _completed;
+            if(totalContributionAmount()>=_hardCap){
+                status = _COMPLETED;
             }else{
-                status = _active;
+                status = _ACTIVE;
             }
         }else if(_isCanceled){
-            status = _canceled;
+            status = _CANCELED;
         }
+
+        if(_isFinalized){
+            status = _FINALIZED;
+        }
+
         return status;
     }
     function softCapAmount() public view returns (uint256) {
