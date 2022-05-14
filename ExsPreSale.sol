@@ -97,11 +97,11 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         bool reverseRate;
     }
 
-    uint8 private _UPCOMING=0;
-    uint8 private _ACTIVE=1;
-    uint8 private _COMPLETED=2;
-    uint8 private _FINALIZED=3;
-    uint8 private _CANCELED=4;
+    uint8 constant private _UPCOMING=0;
+    uint8 constant private _ACTIVE=1;
+    uint8 constant private _COMPLETED=2;
+    uint8 constant private _FINALIZED=3;
+    uint8 constant private _CANCELED=4;
 
     uint32 constant private _CONTRACT_ID=1;
     //address constant private _ROUTER_ADDRESS=0x10ED43C718714eb63d5aA57B78B54704E256024E;
@@ -209,6 +209,7 @@ contract ExsPreSale is Ownable, ReentrancyGuard {
         payable
         onlyIfActive
         onlyIfWhitelisted
+        nonReentrant
         onlyIfEnoughSupply
     {
         require(msg.value>=_minContribution, "Value subceed minimum contribution");
